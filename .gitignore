@@ -1,0 +1,16 @@
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Python (in case any scratch scripts run)
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
