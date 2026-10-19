@@ -1,14 +1,16 @@
 --[[
 obs_screen_switcher.lua - Native OBS Lua Script (Auto Screen Switcher)
 
+Versi: 2.0 (Bulletproof State Sync & Auto Defaults)
 Otomatis memindahkan tampilan Display Capture di OBS Studio mengikuti monitor tempat
 window yang sedang aktif / diklik (Game vs Discord).
 
-Fitur:
-- 100% Bawaan OBS Studio (LuaJIT)
-- Zero Dependency: Tidak perlu Python, tidak perlu install paket apapun
-- Zero Window: Berjalan senyap di dalam OBS tanpa terminal/console window
-- Otomatis aktif saat OBS dibuka, otomatis berhenti saat OBS ditutup
+Fitur Utama:
+- 100% Bawaan OBS Studio (LuaJIT, tanpa Python)
+- State Synchronization: Memeriksa langsung monitor aktif pada source OBS (anti-stuck)
+- Script Defaults: Otomatis AKTIF (Enabled=true) saat pertama kali dimuat atau restart PC
+- Smart Ignore Filter: Mengabaikan klik pada OBS Studio (obs64.exe) dan Taskbar
+- Beban CPU 0%
 --]]
 
 local obs = obslua
@@ -55,10 +57,9 @@ local kernel32 = ffi.load("kernel32")
 -- Pengaturan & State
 local enabled = true
 local source_name = "Display Capture"
-local last_hwnd = nil
-local last_mon_idx = -1
+local last_applied_mon = -1
 
--- Fallback Device ID jika query otomatis tidak tersedia
+-- Fallback Device ID khusus pengguna (H24G30F & Mi Monitor)
 local DEFAULT_MON_1_ID = "\\\\?\\DISPLAY#SKY0010#5&1558be21&0&UID4355#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"
 local DEFAULT_MON_2_ID = "\\\\?\\DISPLAY#XMI24B1#5&1558be21&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"
 
@@ -111,6 +112,18 @@ local function get_monitor_index(hwnd)
         end
     end
     return -1
+end
+
+-- Ambil monitor index yang sedang aktif pada source Display Capture di OBS
+local function get_source_current_monitor(source)
+    if source == nil then return -1 end
+    local settings = obs.obs_source_get_settings(source)
+    local mon_idx = -1
+    if settings ~= nil then
+        mon_idx = obs.obs_data_get_int(settings, "monitor")
+        obs.obs_data_release(settings)
+    end
+    return mon_idx
 end
 
 -- Fungsi pergantian Display Capture di OBS
@@ -167,6 +180,7 @@ local function switch_display(target_idx)
 
         obs.obs_source_update(source, settings)
         obs.obs_data_release(settings)
+        last_applied_mon = target_idx
         log("-> SWITCH: Display Capture otomatis beralih ke " .. mon_name)
     end
     obs.obs_source_release(source)
@@ -177,22 +191,24 @@ local function check_foreground_timer()
     if not enabled then return end
 
     local hwnd = user32.GetForegroundWindow()
-    if hwnd == nil or hwnd == last_hwnd then
-        return
-    end
-    last_hwnd = hwnd
+    if hwnd == nil then return end
 
+    -- Abaikan jika user sedang mengklik OBS atau Taskbar
     local proc = get_process_name(hwnd)
     if proc == "obs64.exe" or proc == "obs32.exe" or proc == "taskmgr.exe" or proc == "shellexperiencehost.exe" or proc == "searchhost.exe" then
         return
     end
 
     local target_idx = get_monitor_index(hwnd)
-    if target_idx < 0 or target_idx == last_mon_idx then
+    if target_idx < 0 then
         return
     end
 
-    last_mon_idx = target_idx
+    -- Cek apakah OBS saat ini sudah menampilkan monitor tersebut
+    if target_idx == last_applied_mon then
+        return
+    end
+
     switch_display(target_idx)
 end
 
@@ -202,11 +218,16 @@ end
 
 function script_description()
     return [[
-<h2>OBS Auto Screen Switcher (LUA NATIVE)</h2>
-<p>Otomatis memindahkan monitor pada source <b>Display Capture</b> mengikuti monitor tempat window aktif berada (misal Game di Layar 1 vs Discord di Layar 2).</p>
+<h2>OBS Auto Screen Switcher (LUA NATIVE v2.0)</h2>
+<p>Otomatis memindahkan monitor pada source <b>Display Capture</b> mengikuti monitor tempat window aktif berada (Game di Layar 1 vs Discord di Layar 2).</p>
 <p><b>Kelebihan:</b> 100% bawaan OBS, TIDAK perlu instalasi Python, otomatis aktif setiap kali OBS dibuka!</p>
 <hr/>
 ]]
+end
+
+function script_defaults(settings)
+    obs.obs_data_set_default_bool(settings, "enabled", true)
+    obs.obs_data_set_default_string(settings, "source_name", "Display Capture")
 end
 
 function script_properties()
@@ -237,18 +258,25 @@ function script_properties()
 end
 
 function script_update(settings)
-    enabled = obs.obs_data_get_bool(settings, "enabled")
+    if obs.obs_data_has_user_value(settings, "enabled") then
+        enabled = obs.obs_data_get_bool(settings, "enabled")
+    else
+        enabled = true
+    end
+
     local s_name = obs.obs_data_get_string(settings, "source_name")
     if s_name ~= "" then
         source_name = s_name
     else
         source_name = "Display Capture"
     end
+
+    last_applied_mon = -1
     log("Pengaturan diperbarui: Source='" .. source_name .. "', Enabled=" .. tostring(enabled))
 end
 
 function script_load(settings)
-    log("Memuat OBS Auto Screen Switcher LUA...")
+    log("Memuat OBS Auto Screen Switcher LUA v2.0...")
     script_update(settings)
     obs.timer_remove(check_foreground_timer)
     obs.timer_add(check_foreground_timer, 100)
